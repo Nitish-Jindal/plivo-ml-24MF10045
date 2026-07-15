@@ -1,23 +1,16 @@
-"""A small GPT in plain PyTorch. Yours to modify or replace entirely —
-attention, SSM, whatever — as long as evaluate.py still works and the
-parameter cap holds.
-"""
 import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class Config:
-    vocab_size = 256      # byte-level tokenizer default
-    block_size = 128
+    vocab_size = 256      # Overridden dynamically by train.py based on our new tokenizer
+    block_size = 256
     n_layer = 4
-    n_head = 4
-    n_embd = 160
+    n_head = 6
+    n_embd = 192
     dropout = 0.0
-    tie_weights = False   # <- one of many things worth questioning
-
+    tie_weights = True    # Tied to afford the expanded vocab size!
 
 class SelfAttention(nn.Module):
     def __init__(self, cfg):
@@ -37,7 +30,6 @@ class SelfAttention(nn.Module):
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         return self.drop(self.proj(y))
 
-
 class Block(nn.Module):
     def __init__(self, cfg):
         super().__init__()
@@ -52,7 +44,6 @@ class Block(nn.Module):
         x = x + self.attn(self.ln1(x))
         x = x + self.mlp(self.ln2(x))
         return x
-
 
 class GPT(nn.Module):
     def __init__(self, cfg):
@@ -69,7 +60,6 @@ class GPT(nn.Module):
         self.apply(self._init)
 
     def _init(self, m):
-        # baseline init: plain normal, one std for everything
         if isinstance(m, (nn.Linear, nn.Embedding)):
             nn.init.normal_(m.weight, mean=0.0, std=0.05)
             if isinstance(m, nn.Linear) and m.bias is not None:
@@ -84,8 +74,7 @@ class GPT(nn.Module):
         logits = self.head(self.ln_f(x))
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
-                                   targets.reshape(-1))
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.reshape(-1))
         return logits, loss
 
     def n_params(self):

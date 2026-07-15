@@ -1,39 +1,39 @@
-"""Baseline tokenizer: raw UTF-8 bytes, vocab of 256. Simple, never fails on
-unseen text — and treats a Devanagari character as 3 tokens. Think about
-what that does to your model's context window and your token budget on the
-Hindi part of the corpus.
-
-You may replace this with anything you train ON THE PROVIDED CORPUS ONLY
-(e.g., BPE), as long as:
-  1. it can encode ARBITRARY UTF-8 text (byte-level fallback) and it is
-     LOSSLESS: decode(encode(text)) == text, exactly. The scorer and the
-     graders both verify this round-trip — a lossy tokenizer makes bpb
-     meaningless and disqualifies the run.
-  2. this file keeps exposing:  load() -> tokenizer object with
-     .encode(str) -> list[int], .decode(list[int]) -> str, .vocab_size.
-     train.py and evaluate.py call load() with NO arguments — keep any
-     extra parameters optional.
-  3. anything it needs is saved under your submission folder and loaded by
-     load() with no internet. Grading runs with cwd = your folder; resolve
-     saved files relative to __file__ to be safe.
-"""
 import json
+import os
 
-
-class ByteTokenizer:
-    vocab_size = 256
+class CharByteTokenizer:
+    def __init__(self):
+        self.vocab_size = 256
+        self.char_to_id = {}
+        self.id_to_bytes = {}
+        
+        vocab_path = os.path.join(os.path.dirname(__file__), "vocab.json")
+        if os.path.exists(vocab_path):
+            with open(vocab_path, "r", encoding="utf-8") as f:
+                self.char_to_id = json.load(f)
+            
+            self.vocab_size = 256 + len(self.char_to_id)
+            for char, idx in self.char_to_id.items():
+                self.id_to_bytes[idx] = char.encode("utf-8")
 
     def encode(self, text):
-        return list(text.encode("utf-8"))
+        ids = []
+        for char in text:
+            if char in self.char_to_id:
+                ids.append(self.char_to_id[char])
+            else:
+                # Fallback to pure bytes for unseen characters (lossless guarantee)
+                ids.extend(list(char.encode("utf-8")))
+        return ids
 
     def decode(self, ids):
-        return bytes(ids).decode("utf-8", errors="replace")
-
-    def save(self, path):
-        with open(path, "w") as f:
-            json.dump({"type": "byte"}, f)
-
+        b_array = bytearray()
+        for i in ids:
+            if i < 256:
+                b_array.append(i)
+            else:
+                b_array.extend(self.id_to_bytes[i])
+        return bytes(b_array).decode("utf-8", errors="replace")
 
 def load(path=None):
-    """Return the tokenizer used by evaluate.py. Replace as needed."""
-    return ByteTokenizer()
+    return CharByteTokenizer()

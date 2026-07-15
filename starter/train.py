@@ -12,6 +12,7 @@ HARD CAPS (checked at grading, violations = disqualified run):
 """
 import argparse
 import time
+import math
 
 import torch
 
@@ -56,27 +57,50 @@ def main():
     print(f"model: {n:,} params")
     assert n <= MAX_PARAMS, f"cap: max {MAX_PARAMS:,} params"
 
-    # baseline choices, all questionable on purpose:
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr)  # constant LR,
-    # no warmup, no schedule, no weight decay, no gradient clipping.
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
+
+    # Learning rate schedule with Warmup and Cosine Decay
+    def get_lr(it):
+        warmup_steps = 100
+        min_lr = args.lr * 0.1
+        if it <= warmup_steps:
+            return args.lr * it / warmup_steps
+        if it > args.steps:
+            return min_lr
+        decay_ratio = (it - warmup_steps) / (args.steps - warmup_steps)
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+        return min_lr + coeff * (args.lr - min_lr)
 
     model.train()
     t0 = time.time()
     losses = []
+    grad_accum_steps = 3
     for step in range(1, args.steps + 1):
-        x, y = get_batch(ids, cfg.block_size, args.batch, device)
-        _, loss = model(x, y)
+        lr = get_lr(step)
+        for param_group in opt.param_groups:
+            param_group['lr'] = lr
+
         opt.zero_grad(set_to_none=True)
-        loss.backward()
+        step_loss = 0.0
+
+        # Accumulation loop
+        for _ in range(grad_accum_steps):
+            x, y = get_batch(ids, cfg.block_size, args.batch, device)
+            _, loss = model(x, y)
+            loss = loss / grad_accum_steps  # Normalize the loss
+            loss.backward()
+            step_loss += loss.item()
+
+        # Clip gradients and take the single optimizer step
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
-        losses.append(loss.item())
+
+        losses.append(step_loss)
         if step % args.log_every == 0 or step == 1:
             avg = sum(losses[-args.log_every:]) / len(losses[-args.log_every:])
-            print(f"step {step:5d}  loss {avg:.4f}  "
+            print(f"step {step:5d}  loss {avg:.4f}  lr {lr:.2e}  "
                   f"({(time.time()-t0)/step*1000:.0f} ms/step)")
-
-    # every public config attribute is saved — if you add fields to Config,
-    # they ride along automatically and evaluate.py rebuilds the same model
+            
     torch.save({"model": model.state_dict(),
                 "config": {k: getattr(cfg, k) for k in dir(cfg)
                            if not k.startswith("_")
@@ -84,6 +108,36 @@ def main():
                 "steps": args.steps,
                 "train_loss_curve": losses}, args.out)
     print(f"saved {args.out}  ({time.time()-t0:.0f}s total)")
+
+
+    # for step in range(1, args.steps + 1):
+    #     lr = get_lr(step)
+    #     for param_group in opt.param_groups:
+    #         param_group['lr'] = lr
+
+    #     x, y = get_batch(ids, cfg.block_size, args.batch, device)
+    #     _, loss = model(x, y)
+    #     opt.zero_grad(set_to_none=True)
+    #     loss.backward()
+        
+    #     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        
+    #     opt.step()
+    #     losses.append(loss.item())
+    #     if step % args.log_every == 0 or step == 1:
+    #         avg = sum(losses[-args.log_every:]) / len(losses[-args.log_every:])
+    #         print(f"step {step:5d}  loss {avg:.4f}  lr {lr:.2e}  "
+    #               f"({(time.time()-t0)/step*1000:.0f} ms/step)")
+
+    # # every public config attribute is saved — if you add fields to Config,
+    # # they ride along automatically and evaluate.py rebuilds the same model
+    # torch.save({"model": model.state_dict(),
+    #             "config": {k: getattr(cfg, k) for k in dir(cfg)
+    #                        if not k.startswith("_")
+    #                        and not callable(getattr(cfg, k))},
+    #             "steps": args.steps,
+    #             "train_loss_curve": losses}, args.out)
+    # print(f"saved {args.out}  ({time.time()-t0:.0f}s total)")
 
 
 if __name__ == "__main__":
