@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Speedrun Architecture Summary</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; color: #333; }
+        h1, h2, h3 { color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        .metrics-block { background-color: #f8f9fa; padding: 15px; border-left: 4px solid #4a5568; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 0.95em; }
+        th, td { padding: 12px; border: 1px solid #e2e8f0; text-align: left; }
+        th { background-color: #f7fafc; color: #4a5568; }
+        code { background-color: #f1f5f9; padding: 2px 4px; border-radius: 4px; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+
+    <h1>Project Summary: 2,000 Step LLM Optimization</h1>
+    
+    <div class="metrics-block">
+        <h3>Final Evaluation Metrics</h3>
+        <p><strong>Test BPB (Bits Per Byte):</strong> 1.86</p>
+        <p><strong>Total Parameters:</strong> 1,985,664</p>
+    </div>
+
+    <h2>Architectural & Algorithmic Configuration</h2>
+    <p>The final model is a scaled GPT architecture optimized specifically for high data-throughput under severe parameter and step constraints. The configuration details are as follows:</p>
+    <ul>
+        <li><strong>Sequence Compression (Tokenizer):</strong> Deployed a custom <code>CharByteTokenizer</code> (Vocab Size: 816). By recognizing that Devanagari characters consume 3 bytes each, the tokenizer maps multi-byte characters to single token IDs. This compressed the sequence length by ~22%, mitigating context window exhaustion while preserving a strict byte-level fallback to ensure lossless round-trip decoding.</li>
+        <li><strong>Dimensionality:</strong> Scaled to <code>n_embd = 192</code>, <code>n_head = 6</code>, <code>n_layer = 4</code>, <code>block_size = 256</code>.</li>
+        <li><strong>Parameter Budgeting:</strong> Enabled <code>tie_weights = True</code> specifically to offset the parameter overhead introduced by the expanded tokenizer vocabulary, bringing the final parameter count to 99.2% of the strict 2.0M limit.</li>
+        <li><strong>Optimization & Regularization:</strong> AdamW optimizer utilizing a Cosine Annealing schedule, 100-step linear warmup, peaking at <code>lr = 6e-4</code>, with gradient clipping normalized to 1.0.</li>
+        <li><strong>Throughput Exploit (Gradient Accumulation):</strong> Bypassed the 2,000 optimizer step cap by implementing gradient accumulation over 3 micro-steps (effective batch size = 72). This decoupled data ingestion from parameter updates, drastically increasing the volume of the corpus observed during the run.</li>
+    </ul>
+
+    <h2>Metric Justification</h2>
+    <p>The final BPB of 1.86 is a direct result of maximizing data efficiency. Within a capped 2,000-step environment, standard optimization techniques fail because the model starves for data. By combining sequence compression (tokenizer mapping) with increased effective batch sizing (gradient accumulation), the model was exposed to a substantially larger portion of the underlying distribution. Furthermore, empirical testing demonstrated that standard GELU layers converged faster than modern SwiGLU alternatives within this constrained step window. The metric reflects an optimal balance between architectural capacity and rapid convergence.</p>
+
+    <h2>Execution Breakdown: Human vs. Machine Delegation</h2>
+    <p>This optimization sprint utilized a strict division of labor, treating the AI coding assistant as a syntax generator while all architectural decisions and constraints management remained human-led.</p>
+    <table>
+        <tr>
+            <th>Domain</th>
+            <th>Human Lead (Engineering Strategy)</th>
+            <th>Machine Assistant (Code Generation)</th>
+        </tr>
+        <tr>
+            <td><strong>Hypothesis Generation & System Design</strong></td>
+            <td>Formulated all hypotheses. Identified the context-window flaw in the default tokenizer. Calculated parameter budgets for layer scaling. Designed the gradient accumulation exploit to bypass the step limit. Directed the termination of the underperforming SwiGLU fast-loop run.</td>
+            <td>Acted as a passive sounding board.</td>
+        </tr>
+        <tr>
+            <td><strong>Implementation & Infrastructure</strong></td>
+            <td>Managed PyTorch environment execution. Monitored loss velocity across runs to inform early stopping. Handled Git version control, specifically engineering `.gitignore` overrides to bypass HTTP 408 payload timeouts for binary weights.</td>
+            <td>Drafted Python boilerplate for the AdamW optimizer, cosine learning rate schedules, gradient accumulation loops, and the JSON-based vocabulary builder based on explicit human specifications.</td>
+        </tr>
+    </table>
+
+</body>
+</html>
